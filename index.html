@@ -1,0 +1,1456 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Mechanical Flipping Clock</title>
+
+  <!-- 引入點陣 LED Digital 字體 (VT323) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg-color: #121212;
+      --header-color: #ffffff;
+      --clock-text-color: #ffffff;
+      --marquee-color: #ffffff;
+      --card-bg-color: #222222;
+      --card-opacity: 0.85;
+      
+      /* 獨立大小比例控制 */
+      --clock-scale: 1.0;       
+      --header-scale: 0.30;     
+      --marquee-scale: 0.25;    
+
+      /* 全屏模式比例 */
+      --fullscreen-scale: 1.20;
+
+      /* 基礎基準尺寸 */
+      --base-card-width: 70px;
+      --base-card-height: 100px;
+      --base-font-size: 64px;
+
+      --card-width: calc(var(--base-card-width) * var(--clock-scale));
+      --card-height: calc(var(--base-card-height) * var(--clock-scale));
+      --font-size: calc(var(--base-font-size) * var(--clock-scale));
+      --flip-speed: 0.28s;
+    }
+
+    /* 全屏動態響應尺寸 */
+    body.is-fullscreen {
+      --card-width: calc(min(12vw, 18vh) * var(--fullscreen-scale) * var(--clock-scale));
+      --card-height: calc(min(18vw, 27vh) * var(--fullscreen-scale) * var(--clock-scale));
+      --font-size: calc(min(11vw, 16vh) * var(--fullscreen-scale) * var(--clock-scale));
+      overflow: hidden !important; /* 全屏模式下維持鎖定 */
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--clock-text-color);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start; /* 讓內容自然向下排版 */
+      padding: 40px 0;             /* 留有上下適度邊距 */
+      overflow-x: hidden;          /* 防止橫向爆出 */
+      overflow-y: auto;            /* 允許垂直滾動以讀取完整面板 */
+      transition: background-color 0.2s ease;
+    }
+
+    /* 主顯示區域 Stage */
+    .clock-stage {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 30px 30px 30px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.03);
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+      backdrop-filter: blur(10px);
+      margin-bottom: 25px;
+      max-width: 95vw;
+      transition: all 0.2s ease;
+    }
+
+    body.is-fullscreen .clock-stage {
+      background: transparent;
+      box-shadow: none;
+      backdrop-filter: none;
+      padding: 0;
+      margin: 0;
+      width: 100vw;
+      height: 100vh;
+      max-width: 100vw;
+      justify-content: center;
+    }
+
+    /* 角落獨立向量控制按鈕 */
+    .corner-actions {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      z-index: 50;
+    }
+
+    .icon-btn {
+      width: 34px;
+      height: 34px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 6px;
+      transition: background 0.2s, transform 0.1s, opacity 0.2s;
+      opacity: 0.45;
+    }
+
+    .icon-btn.active {
+      opacity: 1;
+      background: rgba(255, 255, 255, 0.22);
+      border-color: rgba(255, 255, 255, 0.4);
+    }
+
+    .icon-btn:hover {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    .icon-btn:active {
+      transform: scale(0.92);
+    }
+
+    .icon-btn svg {
+      width: 100%;
+      height: 100%;
+      stroke: var(--header-color);
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    body.is-fullscreen .corner-actions,
+    body.is-fullscreen > .controls-panel {
+      display: none !important;
+    }
+
+    .header-text {
+      font-size: calc(var(--base-font-size) * var(--header-scale));
+      font-weight: 600;
+      letter-spacing: 2px;
+      margin-bottom: 20px;
+      text-align: center;
+      min-height: 1.5em;
+      color: var(--header-color);
+      transition: color 0.2s ease;
+    }
+
+    body.is-fullscreen .header-text {
+      font-size: calc(min(4vw, 5vh) * var(--fullscreen-scale) * (var(--header-scale) / 0.30));
+      margin-bottom: 2vh;
+    }
+
+    .clock-display {
+      display: flex;
+      align-items: center;
+      gap: calc(8px * (var(--card-width) / 70px));
+    }
+
+    body.is-fullscreen .clock-display {
+      gap: calc(1.5vw * var(--fullscreen-scale) * var(--clock-scale));
+    }
+
+    .colon {
+      font-size: calc(var(--font-size) * 0.8);
+      font-weight: bold;
+      color: var(--clock-text-color);
+      margin: 0 2px;
+      align-self: center;
+      animation: blink 1s infinite;
+      transition: color 0.2s ease;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* 單個 3D 跳字卡片容器（硬體加速優化） */
+    .flip-card {
+      position: relative;
+      width: var(--card-width);
+      height: var(--card-height);
+      perspective: 1000px;
+      border-radius: 8px;
+      opacity: var(--card-opacity);
+      box-shadow: 0 6px 15px rgba(0,0,0,0.4);
+      contain: layout paint;
+      transform: translateZ(0);
+    }
+
+    .flip-card.v-mode::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: rgba(0, 0, 0, 0.65);
+      z-index: 25;
+      transform: translateY(-50%);
+      pointer-events: none;
+    }
+
+    .flip-card.h-mode::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 0;
+      width: 2px;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.65);
+      z-index: 25;
+      transform: translateX(-50%);
+      pointer-events: none;
+    }
+
+    .v-structure, .h-structure {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      top: 0;
+      left: 0;
+    }
+
+    .v-structure .half {
+      position: absolute;
+      width: 100%;
+      height: 50%;
+      left: 0;
+      overflow: hidden;
+      background-color: var(--card-bg-color);
+      color: var(--clock-text-color);
+    }
+
+    .v-structure .top {
+      top: 0;
+      border-top-left-radius: 8px;
+      border-top-right-radius: 8px;
+    }
+
+    .v-structure .bottom {
+      bottom: 0;
+      border-bottom-left-radius: 8px;
+      border-bottom-right-radius: 8px;
+    }
+
+    .h-structure .half {
+      position: absolute;
+      width: 50%;
+      height: 100%;
+      top: 0;
+      overflow: hidden;
+      background-color: var(--card-bg-color);
+      color: var(--clock-text-color);
+    }
+
+    .h-structure .left {
+      left: 0;
+      border-top-left-radius: 8px;
+      border-bottom-left-radius: 8px;
+    }
+
+    .h-structure .right {
+      right: 0;
+      border-top-right-radius: 8px;
+      border-bottom-right-radius: 8px;
+    }
+
+    .digit {
+      position: absolute;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: var(--font-size);
+      font-weight: 700;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace, sans-serif;
+    }
+
+    .v-structure .digit {
+      width: 100%;
+      height: var(--card-height);
+      left: 0;
+    }
+
+    .v-structure .top .digit { top: 0; }
+    .v-structure .bottom .digit { top: -100%; }
+
+    .h-structure .digit {
+      width: var(--card-width);
+      height: 100%;
+      top: 0;
+    }
+
+    .h-structure .left .digit { left: 0; }
+    .h-structure .right .digit { left: -100%; }
+
+    .flap {
+      position: absolute;
+      background-color: var(--card-bg-color);
+      color: var(--clock-text-color);
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      z-index: 10;
+      overflow: hidden;
+      will-change: transform;
+      transform-style: preserve-3d;
+    }
+
+    .flap .digit {
+      width: var(--card-width);
+      height: var(--card-height);
+    }
+
+    .flap.top-flap .digit { top: 0; left: 0; }
+    .flap.bottom-flap .digit { top: -100%; left: 0; }
+    .flap.left-flap .digit { top: 0; left: 0; }
+    .flap.right-flap .digit { top: 0; left: -100%; }
+
+    .hidden { display: none !important; }
+
+    /* Keyframe Animations */
+    .flip-down .flap.top-flap {
+      top: 0; left: 0; width: 100%; height: 50%;
+      transform-origin: bottom;
+      animation: flipDownTop var(--flip-speed) cubic-bezier(0.55, 0.055, 0.675, 0.19) forwards;
+      border-top-left-radius: 8px; border-top-right-radius: 8px;
+    }
+    .flip-down .flap.bottom-flap {
+      bottom: 0; left: 0; width: 100%; height: 50%;
+      transform-origin: top;
+      animation: flipDownBottom var(--flip-speed) cubic-bezier(0.215, 0.61, 0.355, 1) var(--flip-speed) forwards;
+      border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
+      transform: rotateX(90deg);
+    }
+
+    @keyframes flipDownTop { 0% { transform: rotateX(0deg); } 100% { transform: rotateX(-90deg); } }
+    @keyframes flipDownBottom { 0% { transform: rotateX(90deg); } 100% { transform: rotateX(0deg); } }
+
+    .flip-up .flap.bottom-flap {
+      bottom: 0; left: 0; width: 100%; height: 50%;
+      transform-origin: top;
+      animation: flipUpBottom var(--flip-speed) cubic-bezier(0.55, 0.055, 0.675, 0.19) forwards;
+      border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;
+    }
+    .flip-up .flap.top-flap {
+      top: 0; left: 0; width: 100%; height: 50%;
+      transform-origin: bottom;
+      animation: flipUpTop var(--flip-speed) cubic-bezier(0.215, 0.61, 0.355, 1) var(--flip-speed) forwards;
+      border-top-left-radius: 8px; border-top-right-radius: 8px;
+      transform: rotateX(-90deg);
+    }
+
+    @keyframes flipUpBottom { 0% { transform: rotateX(0deg); } 100% { transform: rotateX(90deg); } }
+    @keyframes flipUpTop { 0% { transform: rotateX(-90deg); } 100% { transform: rotateX(0deg); } }
+
+    .flip-left .flap.right-flap {
+      top: 0; right: 0; width: 50%; height: 100%;
+      transform-origin: left;
+      animation: flipLeftRight var(--flip-speed) cubic-bezier(0.55, 0.055, 0.675, 0.19) forwards;
+      border-top-right-radius: 8px; border-bottom-right-radius: 8px;
+    }
+    .flip-left .flap.left-flap {
+      top: 0; left: 0; width: 50%; height: 100%;
+      transform-origin: right;
+      animation: flipLeftLeft var(--flip-speed) cubic-bezier(0.215, 0.61, 0.355, 1) var(--flip-speed) forwards;
+      border-top-left-radius: 8px; border-bottom-left-radius: 8px;
+      transform: rotateY(90deg);
+    }
+
+    @keyframes flipLeftRight { 0% { transform: rotateY(0deg); } 100% { transform: rotateY(-90deg); } }
+    @keyframes flipLeftLeft { 0% { transform: rotateY(90deg); } 100% { transform: rotateY(0deg); } }
+
+    .flip-right .flap.left-flap {
+      top: 0; left: 0; width: 50%; height: 100%;
+      transform-origin: right;
+      animation: flipRightLeft var(--flip-speed) cubic-bezier(0.55, 0.055, 0.675, 0.19) forwards;
+      border-top-left-radius: 8px; border-bottom-left-radius: 8px;
+    }
+    .flip-right .flap.right-flap {
+      top: 0; right: 0; width: 50%; height: 100%;
+      transform-origin: left;
+      animation: flipRightRight var(--flip-speed) cubic-bezier(0.215, 0.61, 0.355, 1) var(--flip-speed) forwards;
+      border-top-right-radius: 8px; border-bottom-right-radius: 8px;
+      transform: rotateY(-90deg);
+    }
+
+    @keyframes flipRightLeft { 0% { transform: rotateY(0deg); } 100% { transform: rotateY(90deg); } }
+    @keyframes flipRightRight { 0% { transform: rotateY(-90deg); } 100% { transform: rotateY(0deg); } }
+
+    /* 走馬燈 */
+    .marquee-container {
+      width: 100%;
+      max-width: 500px;
+      overflow: hidden;
+      white-space: nowrap;
+      margin-top: 20px;
+      background: rgba(0,0,0,0.2);
+      padding: 8px 0;
+      border-radius: 6px;
+    }
+
+    body.is-fullscreen .marquee-container {
+      max-width: 80vw;
+      margin-top: 3vh;
+    }
+
+    .marquee-content {
+      display: inline-block;
+      padding-left: 100%;
+      animation: marquee 12s linear infinite;
+      font-size: calc(var(--base-font-size) * var(--marquee-scale));
+      font-weight: 500;
+      color: var(--marquee-color);
+      transition: color 0.2s ease;
+      font-family: 'VT323', monospace;
+      letter-spacing: 2px;
+    }
+
+    body.is-fullscreen .marquee-content {
+      font-size: calc(min(3vw, 4vh) * var(--fullscreen-scale) * (var(--marquee-scale) / 0.25));
+    }
+
+    @keyframes marquee {
+      0% { transform: translate(0, 0); }
+      100% { transform: translate(-100%, 0); }
+    }
+
+    /* 控制面板 */
+    .controls-panel {
+      background: rgba(255, 255, 255, 0.07);
+      border-radius: 12px;
+      padding: 20px;
+      width: 90vw;
+      max-width: 680px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      backdrop-filter: blur(5px);
+      margin-bottom: 30px;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+
+    .control-group label {
+      font-size: 0.82rem;
+      opacity: 0.85;
+    }
+
+    .rgb-inputs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .rgb-inputs input[type="color"] {
+      border: none;
+      width: 32px;
+      height: 32px;
+      border-radius: 4px;
+      cursor: pointer;
+      background: none;
+    }
+
+    .rgb-inputs input[type="text"] {
+      width: 100%;
+      padding: 6px;
+      background: rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: #fff;
+      border-radius: 4px;
+      font-family: 'VT323', monospace;
+      font-size: 1.1rem;
+    }
+
+    .slider-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .slider-container input[type="range"] {
+      flex: 1;
+      cursor: pointer;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(0,0,0,0.2);
+      padding: 8px 12px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .toggle-row input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    select, input[type="text"]:not(.rgb-hex) {
+      padding: 8px;
+      background: rgba(0,0,0,0.4);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: #fff;
+      border-radius: 6px;
+      outline: none;
+      font-family: 'VT323', monospace;
+      font-size: 1.1rem;
+    }
+
+    select option { background: #222; color: #fff; }
+
+    /* 全屏底部上拉抽屜 (Full-Screen Bottom Drawer & Floating Trigger Bar) */
+    .fs-drawer-trigger-zone {
+      display: none;
+    }
+
+    body.is-fullscreen .fs-drawer-trigger-zone {
+      display: flex;
+      position: fixed;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 300px;
+      height: 48px;
+      align-items: flex-end;
+      justify-content: center;
+      z-index: 100;
+      padding-bottom: 6px;
+    }
+
+    .fs-drawer-btn {
+      background: rgba(30, 30, 30, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #ffffff;
+      padding: 6px 18px;
+      border-radius: 20px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      transition: opacity 0.4s ease, transform 0.4s ease, background 0.2s;
+      opacity: 0;
+      transform: translateY(20px);
+      pointer-events: none;
+    }
+
+    .fs-drawer-btn.visible {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .fs-drawer-btn:hover {
+      background: rgba(50, 50, 50, 0.9);
+      border-color: rgba(255, 255, 255, 0.4);
+    }
+
+    .fs-bottom-sheet {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100vw;
+      background: rgba(18, 18, 18, 0.65);
+      backdrop-filter: blur(16px);
+      border-top: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 20px 30px 25px 30px;
+      border-top-left-radius: 20px;
+      border-top-right-radius: 20px;
+      z-index: 90;
+      transform: translateY(100%);
+      transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.25s, opacity 0.25s;
+      display: none;
+    }
+
+    body.is-fullscreen .fs-bottom-sheet {
+      display: block;
+    }
+
+    .fs-bottom-sheet.open {
+      transform: translateY(0);
+    }
+
+    /* 滑桿調整時全屏畫面動態預覽模式 (Focus Preview Mode) */
+    .fs-bottom-sheet.focus-preview {
+      background: rgba(0, 0, 0, 0.15) !important;
+      backdrop-filter: blur(2px) !important;
+      border-top-color: transparent !important;
+    }
+
+    .fs-bottom-sheet.focus-preview .control-group:not(.is-active-slider) {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(15px);
+    }
+
+    .fs-bottom-sheet.focus-preview .fs-sheet-header {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .fs-sheet-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+      transition: opacity 0.25s;
+    }
+
+    .fs-sheet-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: rgba(255,255,255,0.9);
+      letter-spacing: 1px;
+    }
+
+    .fs-sheet-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .fs-sheet-close-btn {
+      background: rgba(255,255,255,0.1);
+      border: none;
+      color: #fff;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 用於跨平台多重防休眠的隱藏 Canvas 與 Video 組件 -->
+  <canvas id="keepAliveCanvas" width="10" height="10" style="display:none;"></canvas>
+  <video id="keepAliveVideo" loop playsinline muted style="position:fixed; opacity:0; pointer-events:none; width:1px; height:1px; top:0; left:0;"></video>
+
+  <div class="clock-stage" id="clockStage">
+    
+    <!-- 角落按鈕 -->
+    <div class="corner-actions">
+      <button class="icon-btn active" id="btnClockToggle" title="顯示/隱藏時鐘">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 15"/></svg>
+      </button>
+
+      <button class="icon-btn active" id="btnTextToggle" title="顯示/隱藏頂部文字">
+        <svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+      </button>
+
+      <button class="icon-btn active" id="btnMarqueeToggle" title="顯示/隱藏走馬燈">
+        <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
+      </button>
+
+      <button class="icon-btn active" id="btnToggleFullscreen" title="橫向全屏切換">
+        <svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+      </button>
+    </div>
+
+    <div class="header-text" id="headerText">Monday, 05 Oct</div>
+
+    <div class="clock-display" id="clockDisplay">
+      <div class="flip-card v-mode" id="h1"></div>
+      <div class="flip-card v-mode" id="h2"></div>
+      <div class="colon">:</div>
+      <div class="flip-card v-mode" id="m1"></div>
+      <div class="flip-card v-mode" id="m2"></div>
+      <div class="colon">:</div>
+      <div class="flip-card v-mode" id="s1"></div>
+      <div class="flip-card v-mode" id="s2"></div>
+    </div>
+
+    <div class="marquee-container" id="marqueeContainer">
+      <div class="marquee-content" id="marqueeText">WELCOME TO THE SHOW • LED MATRIX DISPLAY</div>
+    </div>
+  </div>
+
+  <!-- 常規控制面板 -->
+  <div class="controls-panel">
+    <!-- 防休眠恆亮切換 -->
+    <div class="control-group" style="grid-column: 1 / -1;">
+      <div class="toggle-row">
+        <label for="wakeLockCheckbox" style="font-weight: bold; cursor: pointer;">螢幕保持恆亮 (Always On / Prevent Sleep)</label>
+        <input type="checkbox" id="wakeLockCheckbox">
+      </div>
+      <span id="wakeLockStatus" style="font-size: 0.75rem; opacity: 0.7; margin-top: 3px;">未啟用</span>
+    </div>
+
+    <!-- 獨立大小微調滑桿 -->
+    <div class="control-group">
+      <label>🕒 時鐘大小調整</label>
+      <div class="slider-container">
+        <input type="range" class="clock-scale-input" min="0.5" max="2.0" step="0.05" value="1.0">
+        <span class="clock-scale-val" style="font-size: 0.8rem; min-width: 45px;">100%</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>🔤 固定文字大小調整</label>
+      <div class="slider-container">
+        <input type="range" class="header-scale-input" min="0.10" max="0.80" step="0.01" value="0.30">
+        <span class="header-scale-val" style="font-size: 0.8rem; min-width: 45px;">30%</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>📜 走馬燈大小調整</label>
+      <div class="slider-container">
+        <input type="range" class="marquee-scale-input" min="0.10" max="0.80" step="0.01" value="0.25">
+        <span class="marquee-scale-val" style="font-size: 0.8rem; min-width: 45px;">25%</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>⛶ 全屏模式整體大小微調</label>
+      <div class="slider-container">
+        <input type="range" class="fullscreen-scale-input" min="0.5" max="1.5" step="0.05" value="1.0">
+        <span class="fullscreen-scale-val" style="font-size: 0.8rem; min-width: 45px;">100%</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>1) 主背景顏色</label>
+      <div class="rgb-inputs">
+        <input type="color" id="bgColorPicker" value="#121212">
+        <input type="text" id="bgRgbText" value="#121212">
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>2) 頂部文字顏色</label>
+      <div class="rgb-inputs">
+        <input type="color" id="headerColorPicker" value="#ffffff">
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>3) 時鐘數字顏色</label>
+      <div class="rgb-inputs">
+        <input type="color" id="clockTextColorPicker" value="#ffffff">
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>4) 走馬燈文字顏色</label>
+      <div class="rgb-inputs">
+        <input type="color" id="marqueeColorPicker" value="#ffaa00">
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>5) 跳字卡片背景色與透明度</label>
+      <div class="rgb-inputs">
+        <input type="color" id="cardColorPicker" value="#222222">
+      </div>
+      <div class="slider-container" style="margin-top: 6px;">
+        <span style="font-size: 0.8rem;">透明度:</span>
+        <input type="range" id="cardAlphaSlider" min="0" max="100" value="85">
+        <span id="alphaValueText" style="font-size: 0.8rem; min-width: 35px;">85%</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>6) 選擇時區</label>
+      <select id="timezoneSelect">
+        <option value="Asia/Hong_Kong" selected>香港 (HKT / UTC+8)</option>
+        <option value="Asia/Tokyo">東京 (JST / UTC+9)</option>
+        <option value="Europe/London">倫敦 (GMT/BST)</option>
+        <option value="America/New_York">紐約 (EST/EDT)</option>
+        <option value="UTC">世界協調時間 (UTC)</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label>7) 跳字揭板方向</label>
+      <select id="directionSelect">
+        <option value="down" selected>向下翻 (Down)</option>
+        <option value="up">向上翻 (Up)</option>
+        <option value="left">向左翻 (Left)</option>
+        <option value="right">向右翻 (Right)</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label>8) 頂部固定文字 (留空顯示日期)</label>
+      <input type="text" id="customHeaderInput" placeholder="例如：TARS TACTICAL CLOCK">
+    </div>
+
+    <div class="control-group" style="grid-column: 1 / -1;">
+      <label>9) 走馬燈文字</label>
+      <input type="text" id="customMarqueeInput" value="WELCOME TO THE SHOW • LED MATRIX DISPLAY">
+    </div>
+  </div>
+
+  <!-- 全屏模式專用底部感應區與彈出按鈕 -->
+  <div class="fs-drawer-trigger-zone" id="fsTriggerZone">
+    <button class="fs-drawer-btn" id="fsDrawerBtn">
+      <span id="fsBtnIcon">▲</span> <span>顯示調節滑桿</span>
+    </button>
+  </div>
+
+  <!-- 全屏模式半透明底部滑動抽屜 (Bottom Sheet) -->
+  <div class="fs-bottom-sheet" id="fsBottomSheet">
+    <div class="fs-sheet-header">
+      <span class="fs-sheet-title">🎛️ 畫面尺寸動態微調面板</span>
+      <button class="fs-sheet-close-btn" id="fsSheetCloseBtn">收起 ▼</button>
+    </div>
+    <div class="fs-sheet-grid">
+      <div class="control-group" id="fsGroup1">
+        <label>🕒 時鐘大小</label>
+        <div class="slider-container">
+          <input type="range" class="clock-scale-input" min="0.5" max="2.0" step="0.05" value="1.0">
+          <span class="clock-scale-val" style="font-size: 0.8rem; min-width: 45px;">100%</span>
+        </div>
+      </div>
+
+      <div class="control-group" id="fsGroup2">
+        <label>🔤 固定文字大小</label>
+        <div class="slider-container">
+          <input type="range" class="header-scale-input" min="0.10" max="0.80" step="0.01" value="0.30">
+          <span class="header-scale-val" style="font-size: 0.8rem; min-width: 45px;">30%</span>
+        </div>
+      </div>
+
+      <div class="control-group" id="fsGroup3">
+        <label>📜 走馬燈大小</label>
+        <div class="slider-container">
+          <input type="range" class="marquee-scale-input" min="0.10" max="0.80" step="0.01" value="0.25">
+          <span class="marquee-scale-val" style="font-size: 0.8rem; min-width: 45px;">25%</span>
+        </div>
+      </div>
+
+      <div class="control-group" id="fsGroup4">
+        <label>⛶ 全屏整體微調</label>
+        <div class="slider-container">
+          <input type="range" class="fullscreen-scale-input" min="0.5" max="1.5" step="0.05" value="1.0">
+          <span class="fullscreen-scale-val" style="font-size: 0.8rem; min-width: 45px;">100%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentDirection = 'down';
+    let currentTimezone = 'Asia/Hong_Kong';
+
+    const displayState = {
+      clock: true,
+      text: true,
+      marquee: true
+    };
+
+    const cards = {
+      h1: document.getElementById('h1'),
+      h2: document.getElementById('h2'),
+      m1: document.getElementById('m1'),
+      m2: document.getElementById('m2'),
+      s1: document.getElementById('s1'),
+      s2: document.getElementById('s2')
+    };
+
+    const cardStates = { h1: '', h2: '', m1: '', m2: '', s1: '', s2: '' };
+
+    function initCardDOM(cardEl) {
+      cardEl.innerHTML = `
+        <div class="v-structure">
+          <div class="half top"><div class="digit">0</div></div>
+          <div class="half bottom"><div class="digit">0</div></div>
+        </div>
+        <div class="h-structure hidden">
+          <div class="half left"><div class="digit">0</div></div>
+          <div class="half right"><div class="digit">0</div></div>
+        </div>
+      `;
+    }
+
+    Object.values(cards).forEach(initCardDOM);
+
+    function rebindAllCardsAxis(dir) {
+      const isVertical = (dir === 'down' || dir === 'up');
+      Object.keys(cards).forEach(key => {
+        const cardEl = cards[key];
+        const val = cardStates[key] || '0';
+        
+        cardEl.className = `flip-card ${isVertical ? 'v-mode' : 'h-mode'}`;
+        const vStruct = cardEl.querySelector('.v-structure');
+        const hStruct = cardEl.querySelector('.h-structure');
+        
+        const oldFlaps = cardEl.querySelectorAll('.flap');
+        oldFlaps.forEach(f => f.remove());
+
+        if (isVertical) {
+          vStruct.classList.remove('hidden');
+          hStruct.classList.add('hidden');
+          vStruct.querySelector('.top .digit').textContent = val;
+          vStruct.querySelector('.bottom .digit').textContent = val;
+        } else {
+          hStruct.classList.remove('hidden');
+          vStruct.classList.add('hidden');
+          hStruct.querySelector('.left .digit').textContent = val;
+          hStruct.querySelector('.right .digit').textContent = val;
+        }
+      });
+    }
+
+    function updateCard(cardKey, val, dir) {
+      if (cardStates[cardKey] === val) return;
+
+      const cardEl = cards[cardKey];
+      const oldVal = cardStates[cardKey] || val;
+      cardStates[cardKey] = val;
+
+      const isVertical = (dir === 'down' || dir === 'up');
+      const vStruct = cardEl.querySelector('.v-structure');
+      const hStruct = cardEl.querySelector('.h-structure');
+
+      cardEl.className = `flip-card ${isVertical ? 'v-mode' : 'h-mode'}`;
+      const oldFlaps = cardEl.querySelectorAll('.flap');
+      oldFlaps.forEach(f => f.remove());
+
+      if (isVertical) {
+        vStruct.classList.remove('hidden');
+        hStruct.classList.add('hidden');
+      } else {
+        hStruct.classList.remove('hidden');
+        vStruct.classList.add('hidden');
+      }
+
+      if (dir === 'down') {
+        vStruct.querySelector('.top .digit').textContent = val;
+        vStruct.querySelector('.bottom .digit').textContent = oldVal;
+
+        const flapTop = document.createElement('div');
+        flapTop.className = 'flap top-flap';
+        flapTop.innerHTML = `<div class="digit">${oldVal}</div>`;
+
+        const flapBottom = document.createElement('div');
+        flapBottom.className = 'flap bottom-flap';
+        flapBottom.innerHTML = `<div class="digit">${val}</div>`;
+
+        cardEl.appendChild(flapTop);
+        cardEl.appendChild(flapBottom);
+
+        void cardEl.offsetWidth;
+        cardEl.classList.add('flip-down');
+
+        setTimeout(() => {
+          vStruct.querySelector('.bottom .digit').textContent = val;
+        }, 560);
+
+      } else if (dir === 'up') {
+        vStruct.querySelector('.bottom .digit').textContent = val;
+        vStruct.querySelector('.top .digit').textContent = oldVal;
+
+        const flapBottom = document.createElement('div');
+        flapBottom.className = 'flap bottom-flap';
+        flapBottom.innerHTML = `<div class="digit">${oldVal}</div>`;
+
+        const flapTop = document.createElement('div');
+        flapTop.className = 'flap top-flap';
+        flapTop.innerHTML = `<div class="digit">${val}</div>`;
+
+        cardEl.appendChild(flapBottom);
+        cardEl.appendChild(flapTop);
+
+        void cardEl.offsetWidth;
+        cardEl.classList.add('flip-up');
+
+        setTimeout(() => {
+          vStruct.querySelector('.top .digit').textContent = val;
+        }, 560);
+
+      } else if (dir === 'left') {
+        hStruct.querySelector('.right .digit').textContent = val;
+        hStruct.querySelector('.left .digit').textContent = oldVal;
+
+        const flapRight = document.createElement('div');
+        flapRight.className = 'flap right-flap';
+        flapRight.innerHTML = `<div class="digit">${oldVal}</div>`;
+
+        const flapLeft = document.createElement('div');
+        flapLeft.className = 'flap left-flap';
+        flapLeft.innerHTML = `<div class="digit">${val}</div>`;
+
+        cardEl.appendChild(flapRight);
+        cardEl.appendChild(flapLeft);
+
+        void cardEl.offsetWidth;
+        cardEl.classList.add('flip-left');
+
+        setTimeout(() => {
+          hStruct.querySelector('.left .digit').textContent = val;
+        }, 560);
+
+      } else if (dir === 'right') {
+        hStruct.querySelector('.left .digit').textContent = val;
+        hStruct.querySelector('.right .digit').textContent = oldVal;
+
+        const flapLeft = document.createElement('div');
+        flapLeft.className = 'flap left-flap';
+        flapLeft.innerHTML = `<div class="digit">${oldVal}</div>`;
+
+        const flapRight = document.createElement('div');
+        flapRight.className = 'flap right-flap';
+        flapRight.innerHTML = `<div class="digit">${val}</div>`;
+
+        cardEl.appendChild(flapLeft);
+        cardEl.appendChild(flapRight);
+
+        void cardEl.offsetWidth;
+        cardEl.classList.add('flip-right');
+
+        setTimeout(() => {
+          hStruct.querySelector('.right .digit').textContent = val;
+        }, 560);
+      }
+    }
+
+    // 精準 RAF 時間差對齊計時器，防 Skip 與防 Hang
+    let lastSecondStamp = 0;
+    function clockLoop() {
+      const now = new Date();
+      const currentSec = now.getSeconds();
+
+      if (currentSec !== lastSecondStamp) {
+        lastSecondStamp = currentSec;
+
+        const formatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: currentTimezone,
+          weekday: 'long',
+          day: '2-digit',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false
+        });
+
+        const parts = formatter.formatToParts(now);
+        const p = {};
+        parts.forEach(pt => p[pt.type] = pt.value);
+
+        const customHeader = document.getElementById('customHeaderInput').value.trim();
+        const headerTextEl = document.getElementById('headerText');
+        if (customHeader) {
+          headerTextEl.textContent = customHeader;
+        } else {
+          headerTextEl.textContent = `${p.weekday}, ${p.day} ${p.month}`;
+        }
+
+        const hStr = p.hour || '00';
+        const mStr = p.minute || '00';
+        const sStr = p.second || '00';
+
+        updateCard('h1', hStr[0], currentDirection);
+        updateCard('h2', hStr[1], currentDirection);
+        updateCard('m1', mStr[0], currentDirection);
+        updateCard('m2', mStr[1], currentDirection);
+        updateCard('s1', sStr[0], currentDirection);
+        updateCard('s2', sStr[1], currentDirection);
+      }
+
+      requestAnimationFrame(clockLoop);
+    }
+    requestAnimationFrame(clockLoop);
+
+    // 雙向同步滑桿變數控制邏輯
+    function syncSliderValues(selectorClass, valTextClass, cssVarName, isPercentage = true, internalMultiplier = 1.0) {
+      const inputs = document.querySelectorAll(`.${selectorClass}`);
+      const valTexts = document.querySelectorAll(`.${valTextClass}`);
+
+      inputs.forEach(input => {
+        input.addEventListener('input', (e) => {
+          const userVal = parseFloat(e.target.value);
+          const applyVal = userVal * internalMultiplier;
+          
+          document.documentElement.style.setProperty(cssVarName, applyVal);
+          
+          inputs.forEach(i => i.value = userVal);
+          valTexts.forEach(t => {
+            t.textContent = isPercentage ? `${Math.round(userVal * 100)}%` : userVal;
+          });
+        });
+      });
+    }
+
+    syncSliderValues('clock-scale-input', 'clock-scale-val', '--clock-scale');
+    syncSliderValues('header-scale-input', 'header-scale-val', '--header-scale');
+    syncSliderValues('marquee-scale-input', 'marquee-scale-val', '--marquee-scale');
+    syncSliderValues('fullscreen-scale-input', 'fullscreen-scale-val', '--fullscreen-scale', true, 1.20);
+
+    // 色彩與透明度事件
+    document.getElementById('bgColorPicker').addEventListener('input', (e) => {
+      document.documentElement.style.setProperty('--bg-color', e.target.value);
+      document.getElementById('bgRgbText').value = e.target.value;
+    });
+
+    document.getElementById('headerColorPicker').addEventListener('input', (e) => {
+      document.documentElement.style.setProperty('--header-color', e.target.value);
+    });
+
+    document.getElementById('clockTextColorPicker').addEventListener('input', (e) => {
+      document.documentElement.style.setProperty('--clock-text-color', e.target.value);
+    });
+
+    document.getElementById('marqueeColorPicker').addEventListener('input', (e) => {
+      document.documentElement.style.setProperty('--marquee-color', e.target.value);
+    });
+
+    function updateCardBgColor() {
+      const hex = document.getElementById('cardColorPicker').value;
+      const alpha = document.getElementById('cardAlphaSlider').value / 100;
+      
+      document.documentElement.style.setProperty('--card-bg-color', hex);
+      document.documentElement.style.setProperty('--card-opacity', alpha);
+      document.getElementById('alphaValueText').textContent = `${Math.round(alpha * 100)}%`;
+    }
+
+    document.getElementById('cardColorPicker').addEventListener('input', updateCardBgColor);
+    document.getElementById('cardAlphaSlider').addEventListener('input', updateCardBgColor);
+
+    document.getElementById('timezoneSelect').addEventListener('change', (e) => {
+      currentTimezone = e.target.value;
+    });
+
+    document.getElementById('directionSelect').addEventListener('change', (e) => {
+      currentDirection = e.target.value;
+      rebindAllCardsAxis(currentDirection);
+    });
+
+    document.getElementById('customMarqueeInput').addEventListener('input', (e) => {
+      document.getElementById('marqueeText').textContent = e.target.value || ' ';
+    });
+
+    // 多選顯示模式 (Multi-Select Toggles)
+    const headerText = document.getElementById('headerText');
+    const clockDisplay = document.getElementById('clockDisplay');
+    const marqueeContainer = document.getElementById('marqueeContainer');
+
+    const btnClockToggle = document.getElementById('btnClockToggle');
+    const btnTextToggle = document.getElementById('btnTextToggle');
+    const btnMarqueeToggle = document.getElementById('btnMarqueeToggle');
+
+    function updateDisplayLayout() {
+      clockDisplay.style.display = displayState.clock ? 'flex' : 'none';
+      headerText.style.display = displayState.text ? 'block' : 'none';
+      marqueeContainer.style.display = displayState.marquee ? 'block' : 'none';
+
+      btnClockToggle.classList.toggle('active', displayState.clock);
+      btnTextToggle.classList.toggle('active', displayState.text);
+      btnMarqueeToggle.classList.toggle('active', displayState.marquee);
+    }
+
+    btnClockToggle.addEventListener('click', () => {
+      displayState.clock = !displayState.clock;
+      updateDisplayLayout();
+    });
+
+    btnTextToggle.addEventListener('click', () => {
+      displayState.text = !displayState.text;
+      updateDisplayLayout();
+    });
+
+    btnMarqueeToggle.addEventListener('click', () => {
+      displayState.marquee = !displayState.marquee;
+      updateDisplayLayout();
+    });
+
+    // 全屏邏輯
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().then(() => {
+          document.body.classList.add('is-fullscreen');
+          if (screen.orientation && screen.orientation.lock) {
+            screen.orientation.lock('landscape').catch(() => {});
+          }
+          resetBtnIdleTimer();
+        }).catch(err => console.log(err));
+      } else {
+        document.exitFullscreen().then(() => {
+          document.body.classList.remove('is-fullscreen');
+          closeFsDrawer();
+        }).catch(() => {});
+      }
+    }
+
+    document.getElementById('btnToggleFullscreen').addEventListener('click', toggleFullscreen);
+
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement) {
+        document.body.classList.remove('is-fullscreen');
+        closeFsDrawer();
+      }
+    });
+
+    document.addEventListener('dblclick', (e) => {
+      if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') {
+        toggleFullscreen();
+      }
+    });
+
+    // 全屏模式底部抽屜 (Bottom Drawer) 互動 logic
+    const fsDrawerBtn = document.getElementById('fsDrawerBtn');
+    const fsBtnIcon = document.getElementById('fsBtnIcon');
+    const fsBottomSheet = document.getElementById('fsBottomSheet');
+    const fsSheetCloseBtn = document.getElementById('fsSheetCloseBtn');
+    const fsTriggerZone = document.getElementById('fsTriggerZone');
+
+    let isDrawerOpen = false;
+    let btnIdleTimer = null;
+
+    function resetBtnIdleTimer() {
+      clearTimeout(btnIdleTimer);
+      if (document.body.classList.contains('is-fullscreen') && !isDrawerOpen) {
+        fsDrawerBtn.classList.add('visible');
+        btnIdleTimer = setTimeout(() => {
+          if (!isDrawerOpen) {
+            fsDrawerBtn.classList.remove('visible');
+          }
+        }, 5000);
+      }
+    }
+
+    function openFsDrawer() {
+      isDrawerOpen = true;
+      fsBottomSheet.classList.add('open');
+      fsBtnIcon.textContent = '▼';
+      fsDrawerBtn.querySelector('span:last-child').textContent = '收起面板';
+      fsDrawerBtn.classList.add('visible');
+      clearTimeout(btnIdleTimer);
+    }
+
+    function closeFsDrawer() {
+      isDrawerOpen = false;
+      fsBottomSheet.classList.remove('open');
+      fsBottomSheet.classList.remove('focus-preview');
+      fsBtnIcon.textContent = '▲';
+      fsDrawerBtn.querySelector('span:last-child').textContent = '顯示調節滑桿';
+      resetBtnIdleTimer();
+    }
+
+    fsDrawerBtn.addEventListener('click', () => {
+      if (isDrawerOpen) closeFsDrawer();
+      else openFsDrawer();
+    });
+
+    fsSheetCloseBtn.addEventListener('click', closeFsDrawer);
+
+    // 滑鼠/觸控觸及全屏畫面底部中央區域重新喚醒按鈕
+    fsTriggerZone.addEventListener('mousemove', resetBtnIdleTimer);
+    fsTriggerZone.addEventListener('touchstart', resetBtnIdleTimer);
+    document.addEventListener('mousemove', (e) => {
+      if (document.body.classList.contains('is-fullscreen')) {
+        if (e.clientY > window.innerHeight - 80) {
+          resetBtnIdleTimer();
+        }
+      }
+    });
+
+    // 拖動滑桿時的動態實時全屏預覽 (Focus Slider Preview Mode)
+    const fsGroups = [
+      document.getElementById('fsGroup1'),
+      document.getElementById('fsGroup2'),
+      document.getElementById('fsGroup3'),
+      document.getElementById('fsGroup4')
+    ];
+
+    fsGroups.forEach(group => {
+      const slider = group.querySelector('input[type="range"]');
+      
+      const startFocus = () => {
+        fsBottomSheet.classList.add('focus-preview');
+        fsGroups.forEach(g => g.classList.remove('is-active-slider'));
+        group.classList.add('is-active-slider');
+      };
+
+      const endFocus = () => {
+        fsBottomSheet.classList.remove('focus-preview');
+        group.classList.remove('is-active-slider');
+        resetBtnIdleTimer();
+      };
+
+      slider.addEventListener('mousedown', startFocus);
+      slider.addEventListener('touchstart', startFocus);
+      slider.addEventListener('mouseup', endFocus);
+      slider.addEventListener('touchend', endFocus);
+    });
+
+    // 多重防休眠恆亮 (Always On) 邏輯
+    let wakeLock = null;
+    let audioWakeCtx = null;
+    let keepAliveAnimId = null;
+
+    const wakeLockCheckbox = document.getElementById('wakeLockCheckbox');
+    const wakeLockStatus = document.getElementById('wakeLockStatus');
+    const keepAliveCanvas = document.getElementById('keepAliveCanvas');
+    const keepAliveVideo = document.getElementById('keepAliveVideo');
+
+    function startCanvasKeepAliveStream() {
+      const ctx = keepAliveCanvas.getContext('2d');
+      let frame = 0;
+
+      function renderFrame() {
+        ctx.fillStyle = (frame % 2 === 0) ? '#000000' : '#ffffff';
+        ctx.fillRect(0, 0, 10, 10);
+        frame++;
+        keepAliveAnimId = requestAnimationFrame(renderFrame);
+      }
+      renderFrame();
+
+      try {
+        if (keepAliveCanvas.captureStream) {
+          const stream = keepAliveCanvas.captureStream(10);
+          keepAliveVideo.srcObject = stream;
+          keepAliveVideo.play().catch(() => {});
+        }
+      } catch (err) {
+        console.warn('Canvas stream fallback error:', err);
+      }
+    }
+
+    function stopCanvasKeepAliveStream() {
+      if (keepAliveAnimId) {
+        cancelAnimationFrame(keepAliveAnimId);
+        keepAliveAnimId = null;
+      }
+      try {
+        keepAliveVideo.pause();
+        keepAliveVideo.srcObject = null;
+      } catch (e) {}
+    }
+
+    function startAudioWakeLoop() {
+      try {
+        if (!audioWakeCtx) {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) {
+            audioWakeCtx = new AudioCtx();
+            const osc = audioWakeCtx.createOscillator();
+            const gain = audioWakeCtx.createGain();
+            gain.gain.value = 0.00001;
+            osc.connect(gain);
+            gain.connect(audioWakeCtx.destination);
+            osc.start();
+          }
+        } else if (audioWakeCtx.state === 'suspended') {
+          audioWakeCtx.resume();
+        }
+      } catch (e) {}
+    }
+
+    function stopAudioWakeLoop() {
+      if (audioWakeCtx && audioWakeCtx.state === 'running') {
+        audioWakeCtx.suspend();
+      }
+    }
+
+    async function enableScreenAlwaysOn() {
+      let isNativeSuccess = false;
+
+      if ('wakeLock' in navigator) {
+        try {
+          wakeLock = await navigator.wakeLock.request('screen');
+          isNativeSuccess = true;
+          
+          wakeLock.addEventListener('release', () => {
+            if (wakeLockCheckbox.checked && document.visibilityState === 'visible') {
+              navigator.wakeLock.request('screen').then(wl => wakeLock = wl).catch(() => {});
+            }
+          });
+        } catch (err) {
+          console.warn('Wake Lock request error:', err);
+        }
+      }
+
+      startCanvasKeepAliveStream();
+      startAudioWakeLoop();
+
+      if (isNativeSuccess) {
+        wakeLockStatus.textContent = '🟢 已成功啟用：原生 Screen Wake Lock 保持恆亮中';
+        wakeLockStatus.style.color = '#4ade80';
+      } else {
+        wakeLockStatus.textContent = '🟢 已成功啟用：Canvas/音效多重防休眠機制運行中';
+        wakeLockStatus.style.color = '#4ade80';
+      }
+    }
+
+    async function disableScreenAlwaysOn() {
+      if (wakeLock !== null) {
+        try {
+          await wakeLock.release();
+        } catch (e) {}
+        wakeLock = null;
+      }
+      stopCanvasKeepAliveStream();
+      stopAudioWakeLoop();
+      wakeLockStatus.textContent = '🔴 未啟用 (跟隨系統設定休眠)';
+      wakeLockStatus.style.color = 'inherit';
+    }
+
+    wakeLockCheckbox.addEventListener('change', async () => {
+      if (wakeLockCheckbox.checked) {
+        await enableScreenAlwaysOn();
+      } else {
+        await disableScreenAlwaysOn();
+      }
+    });
+
+    document.addEventListener('visibilitychange', async () => {
+      if (wakeLockCheckbox.checked && document.visibilityState === 'visible') {
+        await enableScreenAlwaysOn();
+      }
+    });
+
+    document.addEventListener('click', () => {
+      if (wakeLockCheckbox.checked) {
+        if (audioWakeCtx && audioWakeCtx.state === 'suspended') {
+          audioWakeCtx.resume();
+        }
+        if (keepAliveVideo.paused && keepAliveVideo.srcObject) {
+          keepAliveVideo.play().catch(() => {});
+        }
+      }
+    });
+  </script>
+</body>
+</html>
